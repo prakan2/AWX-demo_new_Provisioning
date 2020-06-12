@@ -1,0 +1,21 @@
+RITM2443924
+hostname: bnppp
+volume_size: 5 
+num_of_vols: 2
+init: [50000972c007991c,50000972c007995c]
+alias_port: [hba0,hba1]
+hostId: bnppp_IG
+maskingViewId: bnppp_MV
+storageGroupId: bnppp_SG
+remote_storage_group: bnppp_SG
+Password: smc
+Username: smc
+unisphere_url: 'https://10.241.210.217:8443'
+sloId: Diamond
+srpId: SRP_1
+symmetrixId: 000197600361
+remoteSymmId: 000197600362
+portgroup: Unisphere_2_PG
+smtp_server: mailhub.lss.emc.com
+email_id: nishu.prakash@dell.com
+

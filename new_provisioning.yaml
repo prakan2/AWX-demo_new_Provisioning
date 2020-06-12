@@ -1,0 +1,435 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  vars_files: "{{ myvarfile }}"
+  vars:
+    initiator: []
+    portdetails: []
+    wwn: []
+    rename_wwn: []
+    initiator_rename: []
+  tasks:
+  - name: Listing initiator
+    block:
+    - name: initiator details
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/initiator?initiator_hba={{ item }}"
+        method: GET
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        status_code: 201,200
+      register: initiator_details
+      with_items:
+        - "{{ init }}"
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- Listing initiator failed- FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+
+#  - name: list of wwn
+#    debug:
+#      msg: "{{ initiator_details.results|map(attribute='json.initiatorId')|list }}"
+
+
+  - name: testing the list
+    set_fact:
+      wwn: "{{ wwn }} + [ '{{ item }}' ]"
+    with_items: "{{ initiator_details.results|map(attribute='json.initiatorId')|list }}"
+
+#  - name: print wwn
+#    debug: var=wwn
+
+  - name: test shell command
+    shell: |
+      V_var=`echo {{ wwn }} | sed -e $'s/,/ /g' | sed 's/[][]//g'`
+      array=($V_var)
+      for i in ${array[@]}
+      do
+        V_arr=`echo $i | awk -F ":" '{if ($3 == "{{ item }}") print $0;}'`
+        V_null+=" $V_arr"
+      done
+      echo $V_null | cut -d " " -f1
+    args:
+      executable: /bin/bash
+    register: test
+    with_items:
+      - "{{ init }}"
+  - name: print
+    debug:
+      msg: "{{ test.results|map(attribute='stdout_lines') | list  }}"
+  - name: creating list of initiator to be renamed
+    set_fact:
+      initiator_rename: "{{ initiator_rename }} + [ '{{ item }}' ]"
+    with_items: "{{ test.results|map(attribute='stdout_lines') | list  }}"
+
+  - name: print initiator to be renamed
+    debug:
+      msg: "{{ initiator_rename }}"
+
+
+
+  - name: Rename initiator
+    block:
+    - name: renaming initiator  
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/initiator/{{ item.0 }}"
+        method: PUT
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        status_code: 201,200
+        body_format: json
+        body:
+          {
+          "editInitiatorActionParam": {
+          "renameAliasParam": {
+          "port_name": "{{ item.1 }}",
+          "node_name": "{{ hostname }}"
+          }
+          }
+          }
+      register: initiator_renaming
+      with_together:
+        - "{{ initiator_rename }}"
+        - "{{ alias_port }}" #change in item since now start script is taking care of port alias 
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- Renaming initiator- FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+      - meta: end_play
+
+#  - debug:
+#        msg="{{ initiator_renaming }}"
+
+
+
+
+  - name: initiator details
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/initiator?alias=<like>{{ hostname }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: initiator_details
+  - name: output of initiator_details
+    debug:
+      msg: "{{ initiator_details.json.initiatorId }}"
+
+  - name: collecting all the initiator
+    shell: echo "{{ item }}" | awk -F ":" '{ print $3}'
+    register: initiatorgroup
+    with_items:
+      - "{{ initiator_details.json.initiatorId }}"
+  
+  - name: output of initiator
+    debug:
+      msg: "{{ initiatorgroup.results|map(attribute='stdout_lines')|list }}"
+
+  - name: testing the list
+    set_fact:
+      initiator: "{{ initiator }} + [ '{{ item }}' ]"
+    with_items: "{{ initiatorgroup.results|map(attribute='stdout_lines')|list }}"
+  - name: print initiator
+    debug: var=initiator
+
+
+  - name: creating host group
+    block:
+    - name: Creating host group
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/host"
+        method: POST
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        status_code: 201,200
+        body_format: json
+        body:
+          {
+          "hostId": "{{ hostId }}",
+         }
+      register: new_hostgroup
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- HOST group creation task - FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+      - meta: end_play
+
+  - debug:
+        msg: "{{ new_hostgroup }}"
+
+  - name: add initiator to host group
+    ignore_errors: yes
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/host/{{ hostId }}"
+      method: PUT
+      validate_certs: no
+      user: smc
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+      body_format: json
+      body:
+        {
+         "editHostActionParam": {
+         "addInitiatorParam": {
+         "initiator": [
+          "{{ item }}"
+          ]
+         }
+        }
+      }
+    register: new_hostgroup
+    with_items:
+    - "{{ init }}"
+  - debug:
+        msg: "{{ new_hostgroup }}"
+
+  
+  - name: volume creation for an storage group
+    block:
+    - name: volume creation for an storage group
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/storagegroup"
+        method: POST
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        status_code: 201,200
+        body_format: json
+        body:
+          {
+            "srpId": "{{ srpId }}",
+            "storageGroupId": "{{ storageGroupId }}",
+            "emulation": "FBA",
+            "sloBasedStorageGroupParam": [
+            {
+              "noCompression": false,
+              "num_of_vols": "{{ num_of_vols }}",
+              "sloId": "{{ sloId }}",
+              "volumeAttribute": {
+              "volume_size": "{{ volume_size }}",
+              "capacityUnit": "GB"
+             }
+            }
+            ]
+          }
+      register: volume_creation
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- Storage group creation task- FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+      - meta: end_play
+  - debug:
+        msg="{{ volume_creation }}"
+
+
+
+  - name: collecting all the port
+    shell: echo "{{ item }}" | cut -d ":" -f1,2
+    register: port
+    with_items:
+      - "{{ initiator_details.json.initiatorId }}"
+
+  - name: output of port pattern
+    debug:
+      msg: "{{ port.results|map(attribute='stdout_lines')|list }}"
+
+  - name: testing the list
+    set_fact:
+      portdetails: "{{ portdetails }} + [ '{{ item }}' ]"
+    with_items: "{{ port.results|map(attribute='stdout_lines')|list }}"
+
+  - name: print port
+    debug: var=portdetails
+
+  - name: calculating number of dir port
+    shell: echo "{{ portdetails }}" | wc -w
+    register: dirport_count
+
+  - name: print count
+    debug:
+      msg: "{{ dirport_count.stdout }}"
+
+  - name: getting first director port
+    shell: echo "{{ portdetails[0] }}"
+    register: portname
+
+  - name: print portname
+    debug:
+      msg: "{{ portname.stdout }}"
+
+
+  - name: port details
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/portgroup?num_of_ports={{ dirport_count.stdout }}&dir_port={{ portname.stdout }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: portgroup_details
+  - name: output of port_details
+    debug:
+      msg: "{{ portgroup_details.json.portGroupId }}"
+  
+
+  - name: creating srdf replication
+    block:
+    - name: creating srdf replication
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/replication/symmetrix/{{ symmetrixId }}/storagegroup/{{ storageGroupId }}/rdf_group"
+        method: POST
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        timeout: 180
+        status_code: 201,200
+        body_format: json
+        body:
+          {
+           "replicationMode": "Synchronous",
+           "remoteSymmId": "{{ remoteSymmId }}",
+           "remoteStorageGroupName": "{{ remote_storage_group }}",
+           "rdfgNumber": 30 #need to be changed
+          }
+      register: srdf_info
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- Creating SRDF replication- FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+      - meta: end_play
+  - debug:
+        msg: "{{ srdf_info }}"
+ 
+  - name: establishing sync
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/replication/symmetrix/{{ remoteSymmId }}/storagegroup/{{ remote_storage_group }}/rdf_group/30"
+      method: PUT
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      timeout: 180
+      status_code: 201,200
+      body_format: json
+      body:
+        {
+        "action": "Establish"
+        }
+    register: srdf_establish
+  - debug:
+        msg: "{{ srdf_establish }}"
+      
+  - name: Maskingview creation
+    block:
+    - name: Maskingview creation
+      uri:
+        url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/maskingview"
+        method: POST
+        validate_certs: no
+        user: "{{ Username }}"
+        password: "{{ Password }}"
+        force_basic_auth: yes
+        status_code: 201,200
+        body_format: json
+        body:
+          {
+            "portGroupSelection": {
+            "useExistingPortGroupParam": {
+            "portGroupId": "{{ portgroup }}" #need to change to {{ portgroup_details.json.portGroupId }}
+          }
+          },
+            "maskingViewId": "{{ maskingViewId }}",
+            "hostOrHostGroupSelection": {
+            "useExistingHostGroupParam": {
+            "hostGroupId": "{{ hostId }}"
+          }
+          },
+            "storageGroupSelection": {
+            "useExistingStorageGroupParam": {
+            "storageGroupId": "{{ storageGroupId }}"
+          }
+          }
+          }
+      register: masking_view
+    rescue:
+      - debug:
+          msg: 'I caught an error'
+      - shell: echo -e "Hi Team  \n\nTask- Creating masking view- FAILED \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+      - meta: end_play
+  - debug:
+        msg: "{{ masking_view }}"  
+
+  - name: local array volume device  details
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/volume?storageGroupId={{ storageGroupId }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: volume_details
+  - name: list of wwn
+    debug:
+      msg: "{{ volume_details.json.resultList.result|map(attribute='volumeId')|list }}"
+  - name: Fetching created device wwn information
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ symmetrixId }}/volume/{{ item }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: device_wwn_details
+    with_items:
+      - "{{ volume_details.json.resultList.result|map(attribute='volumeId')|list }}"
+  - name: list of wwn
+    debug:
+      msg: "{{ device_wwn_details.results|map(attribute='json.wwn')|list }}"
+
+  - name: remote array volume device details
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ remoteSymmId }}/volume?storageGroupId={{ remote_storage_group }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: remote_volume_details
+  - name: list of wwn
+    debug:
+      msg: "{{ remote_volume_details.json.resultList.result|map(attribute='volumeId')|list }}"
+  - name: Fetching created device wwn information of remote array
+    uri:
+      url: "{{ unisphere_url }}/univmax/restapi/90/sloprovisioning/symmetrix/{{ remoteSymmId }}/volume/{{ item }}"
+      method: GET
+      validate_certs: no
+      user: "{{ Username }}"
+      password: "{{ Password }}"
+      force_basic_auth: yes
+      status_code: 201,200
+    register: remote_device_wwn_details
+    with_items:
+      - "{{ remote_volume_details.json.resultList.result|map(attribute='volumeId')|list }}"
+  - name: list of wwn of remote array
+    debug:
+      msg: "{{ remote_device_wwn_details.results|map(attribute='json.wwn')|list }}"
+
+
+  - shell: echo -e "Hi Team  \n\n{{ Ticket }} request for new provisioning - Successful \n\n Local device WWN:{{ device_wwn_details.results|map(attribute='json.wwn')|list }} \n\nLocal Device ID:{{ volume_details.json.resultList.result|map(attribute='volumeId')|list }} \n\nSize info in GB for local device:{{ device_wwn_details.results|map(attribute='json.cap_gb')|list }} \n\nRemote device WWN details:{{ remote_device_wwn_details.results|map(attribute='json.wwn')|list }} \n\nRemote array Device ID:{{ remote_volume_details.json.resultList.result|map(attribute='volumeId')|list }}  \n\nRegards" | mailx  -s "Update on ticket {{ Ticket }}" -S smtp="{{ smtp_server }}" "{{ email_id }}"
+

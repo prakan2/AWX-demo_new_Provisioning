@@ -1,0 +1,28 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+  - name: Ansible delete file 
+    find:
+      paths: ./reports/
+      patterns: "*.txt"
+    register: files_to_delete
+    no_log: True
+
+  - name: Ansible remove existing reports
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items: "{{ files_to_delete.files }}"
+    no_log: True
+  
+  - name: calling servicenow validation script
+    shell: $(cd ./scripts/ ; sh validate_servicenow_file.sh)
+    register: test_validation
+    no_log: True
+
+  - name: Run a script
+    script: ./scripts/email.sh
+    register: test
+    no_log: True
+ 

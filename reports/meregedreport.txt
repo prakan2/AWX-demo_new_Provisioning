@@ -1,0 +1,16 @@
+Below are the validation report for RITM2443924 :
+
+	HOST server  in  action of RITM2443924 : bnppp 
+
+	Storage group which is going to create: bnppp_SG 
+
+	Initiator group which is going to create: bnppp_IG 
+
+	Masking View which is going to create: bnppp_MV 
+
+	Size of each volume requested :  5  GB
+
+	Number of volume requested: 2
+
+	WWN for the host : 50000972c007991c,50000972c007995c
+
